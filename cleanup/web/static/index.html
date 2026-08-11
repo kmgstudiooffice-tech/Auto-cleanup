@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Auto-Cleanup</title>
+<style>
+  :root { color-scheme: light dark; --safe:#2e7d32; --low:#b8860b; --high:#c62828; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 1100px; margin-inline: auto; }
+  h1 { font-size: 1.4rem; }
+  .toolbar { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem; }
+  button { padding:.5rem .9rem; border-radius:8px; border:1px solid #8888; background:#0a84ff; color:#fff; cursor:pointer; }
+  button.secondary { background:transparent; color:inherit; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .cat { border:1px solid #8884; border-radius:12px; margin-bottom:1rem; overflow:hidden; }
+  .cat h2 { font-size:1rem; margin:0; padding:.6rem .9rem; background:#8881; display:flex; justify-content:space-between; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  td, th { padding:.4rem .6rem; border-top:1px solid #8883; text-align:left; }
+  td.size { text-align:right; white-space:nowrap; }
+  td.path { word-break:break-all; }
+  .risk { font-weight:600; }
+  .risk.safe { color:var(--safe); } .risk.low { color:var(--low); } .risk.high { color:var(--high); }
+  .summary { font-weight:600; margin:1rem 0; }
+  .hint { opacity:.7; font-size:.85rem; }
+  #result { margin-top:1rem; padding:1rem; border-radius:12px; background:#8881; white-space:pre-wrap; }
+  dialog { border:none; border-radius:12px; padding:1.5rem; max-width:480px; }
+</style>
+</head>
+<body>
+  <h1>🧹 Auto-Cleanup</h1>
+  <p class="hint">スキャンしても何も削除されません。削除は「隔離」（復元可能）で行い、実行前に必ず確認します。</p>
+
+  <div class="toolbar">
+    <button id="scanBtn">スキャン</button>
+    <label><input type="checkbox" id="applyChk" /> 実際に隔離する（オフ=ドライラン）</label>
+    <button id="cleanBtn" class="secondary" disabled>選択した項目を処理</button>
+    <span id="status" class="hint"></span>
+  </div>
+
+  <div id="summary" class="summary"></div>
+  <div id="categories"></div>
+  <div id="result" hidden></div>
+
+  <dialog id="confirmDlg">
+    <h3>高リスク項目の確認</h3>
+    <p id="confirmText"></p>
+    <div style="text-align:right; display:flex; gap:.5rem; justify-content:flex-end;">
+      <button class="secondary" id="confirmCancel">キャンセル</button>
+      <button id="confirmOk">承認して処理</button>
+    </div>
+  </dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let candidates = [];
+
+function human(bytes) {
+  const u = ["B","KB","MB","GB","TB"]; let n = bytes, i = 0;
+  while (Math.abs(n) >= 1024 && i < u.length-1) { n/=1024; i++; }
+  return (i===0? n : n.toFixed(1)) + " " + u[i];
+}
+const riskClass = (r) => ["safe","low","high"][r] || "low";
+const riskLabel = (r) => ["安全","低","高"][r] || "低";
+
+async function scan() {
+  $("#status").textContent = "スキャン中…";
+  $("#cleanBtn").disabled = true;
+  const res = await fetch("/api/scan", {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+  const data = await res.json();
+  candidates = data.candidates;
+  render(data);
+  $("#status").textContent = `${data.count} 件 / 合計 ${human(data.total_size)}`;
+  $("#cleanBtn").disabled = data.count === 0;
+}
+
+function render(data) {
+  const groups = {};
+  for (const c of data.candidates) (groups[c.category_label] ||= []).push(c);
+  const container = $("#categories");
+  container.innerHTML = "";
+  for (const [label, items] of Object.entries(groups)) {
+    items.sort((a,b)=>b.size-a.size);
+    const subtotal = items.reduce((s,c)=>s+c.size,0);
+    const div = document.createElement("div");
+    div.className = "cat";
+    div.innerHTML = `<h2><span><label><input type="checkbox" class="catAll" /> ${label}</label></span>
+      <span>${items.length} 件 / ${human(subtotal)}</span></h2>`;
+    const table = document.createElement("table");
+    table.innerHTML = `<tr><th></th><th>リスク</th><th>サイズ</th><th>パス</th><th>理由</th></tr>` +
+      items.map(c => `<tr>
+        <td><input type="checkbox" class="pick" data-id="${c.id}" data-risk="${c.risk}" ${c.risk<2?"checked":""} ${c.action==="uninstall"?"disabled":""}></td>
+        <td class="risk ${riskClass(c.risk)}">${riskLabel(c.risk)}</td>
+        <td class="size">${human(c.size)}</td>
+        <td class="path">${c.path}${c.uninstall_hint?`<br><span class="hint">削除方法: ${c.uninstall_hint}</span>`:""}</td>
+        <td>${c.reason}</td></tr>`).join("");
+    div.appendChild(table);
+    div.querySelector(".catAll").addEventListener("change", (e)=>{
+      div.querySelectorAll(".pick:not([disabled])").forEach(cb=>cb.checked=e.target.checked);
+    });
+    container.appendChild(div);
+  }
+  $("#summary").textContent = data.count ? `合計回収可能サイズ: ${human(data.total_size)}` : "候補は見つかりませんでした。";
+}
+
+function selectedIds() {
+  return [...document.querySelectorAll(".pick:checked")].map(cb=>cb.dataset.id);
+}
+function selectedHighCount() {
+  return [...document.querySelectorAll(".pick:checked")].filter(cb=>cb.dataset.risk==="2").length;
+}
+
+async function clean() {
+  const ids = selectedIds();
+  if (!ids.length) { alert("項目が選択されていません。"); return; }
+  const high = selectedHighCount();
+  if (high > 0) {
+    $("#confirmText").textContent = `高リスク（影響の可能性あり）を ${high} 件含みます。合計 ${ids.length} 件を処理してよろしいですか？`;
+    $("#confirmDlg").showModal();
+    return;
+  }
+  await doClean(ids);
+}
+
+async function doClean(ids) {
+  const apply = $("#applyChk").checked;
+  const res = await fetch("/api/clean", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ids, apply})});
+  const r = await res.json();
+  const box = $("#result");
+  box.hidden = false;
+  let msg = r.dry_run
+    ? `【ドライラン】${r.quarantined} 件 / ${human(r.freed_bytes)} を隔離予定。「実際に隔離する」をオンにして再実行してください。`
+    : `✅ ${r.quarantined} 件 / ${human(r.freed_bytes)} を隔離しました。` + (r.session_id?`\n復元: cleanup restore --session ${r.session_id}`:"");
+  if (r.skipped && r.skipped.length) msg += `\n${r.skipped.length} 件はスキップされました。`;
+  box.textContent = msg;
+  if (apply && !r.dry_run) scan();
+}
+
+$("#scanBtn").addEventListener("click", scan);
+$("#cleanBtn").addEventListener("click", clean);
+$("#confirmOk").addEventListener("click", ()=>{ $("#confirmDlg").close(); doClean(selectedIds()); });
+$("#confirmCancel").addEventListener("click", ()=> $("#confirmDlg").close());
+</script>
+</body>
+</html>

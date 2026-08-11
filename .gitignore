@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# App runtime data (never commit a user's quarantined files or config)
+.auto-cleanup-quarantine/
