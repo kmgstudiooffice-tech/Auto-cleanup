@@ -35,6 +35,10 @@ class RestoreRequest(BaseModel):
     session_id: str
 
 
+class PurgeRequest(BaseModel):
+    session_id: str
+
+
 def _build_app():
     from fastapi import FastAPI
     from fastapi.responses import FileResponse, JSONResponse
@@ -94,6 +98,13 @@ def _build_app():
     def api_restore(req: RestoreRequest):
         restored, failed = Executor.restore(req.session_id)
         return {"restored": restored, "failed": failed}
+
+    @app.post("/api/purge")
+    def api_purge(req: PurgeRequest):
+        # Irreversible: permanently delete a quarantine session's files.
+        existed = req.session_id in Executor.list_sessions()
+        Executor.purge(req.session_id)
+        return {"purged": existed, "session_id": req.session_id}
 
     return app
 

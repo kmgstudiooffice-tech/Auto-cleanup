@@ -64,3 +64,28 @@ def test_clean_sessions_restore_flow(sandbox, monkeypatch):
     assert len(restore["restored"]) == 1
     assert not restore["failed"]
     assert f.exists()  # back in place
+
+
+def test_purge_permanently_deletes(sandbox, monkeypatch):
+    """A purged session is gone for good and no longer restorable."""
+
+    from cleanup.core.config import Config
+
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config(large_file_min_bytes=1000)))
+
+    demo = sandbox / "demo"
+    demo.mkdir()
+    (demo / "big.bin").write_bytes(b"\0" * 5000)
+
+    client = TestClient(_build_app())
+    scan = client.post("/api/scan", json={"paths": [str(demo)], "categories": ["large_file"]}).json()
+    ids = [c["id"] for c in scan["candidates"]]
+    clean = client.post("/api/clean", json={"ids": ids, "apply": True}).json()
+    sid = clean["session_id"]
+
+    purge = client.post("/api/purge", json={"session_id": sid}).json()
+    assert purge["purged"] is True
+    # Session is gone from the list; purging again is a harmless no-op.
+    assert all(s["id"] != sid for s in client.get("/api/sessions").json()["sessions"])
+    again = client.post("/api/purge", json={"session_id": sid}).json()
+    assert again["purged"] is False

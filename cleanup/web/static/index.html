@@ -13,6 +13,7 @@
   .toolbar { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem; }
   button { padding:.5rem .9rem; border-radius:8px; border:1px solid #8888; background:var(--accent); color:#fff; cursor:pointer; font-size:.9rem; }
   button.secondary { background:transparent; color:inherit; }
+  button.danger { background:transparent; color:var(--high); border-color:var(--high); }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:.8rem; margin-bottom:1rem; }
   .card { border:1px solid #8884; border-radius:12px; padding:.9rem; display:flex; flex-direction:column; gap:.4rem; }
@@ -264,10 +265,31 @@ async function loadSessions() {
       const div = document.createElement("div");
       div.className = "session";
       div.innerHTML = `<span><strong>${s.id}</strong> — ${s.count} 件 / ${human(s.total_size)}</span>
-        <button class="secondary" onclick="restore('${s.id}')">↩ 復元</button>`;
+        <span style="display:flex; gap:.4rem;">
+          <button class="secondary" onclick="restore('${s.id}')">↩ 復元</button>
+          <button class="danger" onclick="purge('${s.id}', ${s.count}, '${human(s.total_size)}')">🗑 完全削除</button>
+        </span>`;
       list.appendChild(div);
     }
   } catch (e) { /* sessions are best-effort */ }
+}
+
+async function purge(sessionId, count, sizeText) {
+  if (!confirm(`⚠ セッション ${sessionId} の ${count} 件（${sizeText}）を完全に削除します。\nこの操作は取り消せません（復元できなくなります）。本当によろしいですか？`)) return;
+  try {
+    const res = await fetch("/api/purge", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({session_id: sessionId})});
+    const r = await res.json();
+    const box = $("#result");
+    box.hidden = false; box.className = "";
+    box.innerHTML = r.purged
+      ? `<h2>🗑 完全に削除しました</h2><p>セッション <code>${sessionId}</code> を削除しました（復元不可）。</p>`
+      : `<h2>削除対象が見つかりませんでした</h2>`;
+    await loadSessions();
+    box.scrollIntoView({behavior:"smooth", block:"nearest"});
+  } catch (e) {
+    alert("完全削除に失敗しました: " + e);
+  }
 }
 
 async function restore(sessionId) {
