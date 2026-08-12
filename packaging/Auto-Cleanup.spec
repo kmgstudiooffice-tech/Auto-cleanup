@@ -15,7 +15,8 @@ hiddenimports = []
 
 # uvicorn/fastapi/pydantic/pywebview pull in modules dynamically; collect them
 # so the frozen exe finds everything at runtime.
-for pkg in ("uvicorn", "fastapi", "pydantic", "starlette", "anyio", "webview"):
+# pythonnet/clr_loader are the Windows backend for pywebview's native window.
+for pkg in ("uvicorn", "fastapi", "pydantic", "starlette", "anyio", "webview", "pythonnet", "clr_loader"):
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
         datas += pkg_datas
