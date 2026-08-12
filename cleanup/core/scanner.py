@@ -9,17 +9,21 @@ from .config import Config
 from .models import Category, ScanResult
 from .scanners import (
     duplicates,
+    large_apps,
     large_files,
     stale_files,
     system_junk,
     unused_apps,
+    windows_junk,
 )
 
 ALL_CATEGORIES = [
     Category.SYSTEM_JUNK,
+    Category.WINDOWS_JUNK,
     Category.LARGE_FILE,
     Category.DUPLICATE,
     Category.STALE_FILE,
+    Category.LARGE_APP,
     Category.UNUSED_APP,
 ]
 
@@ -53,12 +57,16 @@ def scan(
     if Category.SYSTEM_JUNK in categories and not roots:
         # System junk always comes from OS junk roots, not user --path.
         result.extend(system_junk.scan(config))
+    if Category.WINDOWS_JUNK in categories and not roots:
+        result.extend(windows_junk.scan(config))
     if Category.LARGE_FILE in categories:
         result.extend(large_files.scan(file_roots, config))
     if Category.DUPLICATE in categories:
         result.extend(duplicates.scan(file_roots, config))
     if Category.STALE_FILE in categories:
         result.extend(stale_files.scan(file_roots, config))
+    if Category.LARGE_APP in categories and not roots:
+        result.extend(large_apps.scan(config))
     if Category.UNUSED_APP in categories and not roots:
         result.extend(unused_apps.scan(config))
 

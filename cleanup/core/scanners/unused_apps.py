@@ -1,14 +1,19 @@
-"""Detect long-unused installed applications (detection + advice only).
+"""Enumerate installed apps and flag the long-unused ones (advisory only).
 
-Uninstalling software is inherently HIGH risk and OS-specific, so this
-scanner never removes anything itself: it emits candidates with an
-``uninstall_hint`` (the command a user could run) and leaves the decision
-to an explicit, per-item confirmation.
+Uninstalling software is inherently HIGH risk and OS-specific, so these
+scanners never remove anything themselves: they emit candidates with an
+``uninstall_hint`` (the command/steps to remove it) and an ``UNINSTALL``
+action, which the UI shows unchecked and never auto-processes.
+
+``enumerate_apps`` is the shared source of app records; :func:`scan` here
+keeps only apps we believe are *not recently used*, and the sibling
+``large_apps`` scanner keeps the *space-hungry* ones.
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import platform_paths
@@ -16,15 +21,58 @@ from ..config import Config
 from ..models import Action, Candidate, Category, RiskLevel, ScanResult
 
 
-def scan(config: Config) -> ScanResult:
+@dataclass
+class AppRecord:
+    name: str          # display name / path used as the candidate path
+    size: int          # bytes on disk (0 if unknown)
+    last_used: float | None  # epoch seconds, or None if unknown
+    uninstall_hint: str | None
+
+
+def enumerate_apps(config: Config) -> tuple[list[AppRecord], list[str]]:
     osname = platform_paths.current_os()
     if osname == "macos":
-        return _scan_macos(config)
+        return _enumerate_macos()
     if osname == "windows":
-        return _scan_windows(config)
-    return _scan_linux(config)
+        return _enumerate_windows()
+    return _enumerate_linux()
 
 
+def scan(config: Config) -> ScanResult:
+    """Propose apps that have not been used for a long time.
+
+    Only apps with a *known* last-used time older than the configured
+    threshold are proposed, so we surface genuinely idle apps rather than
+    dumping the entire installed list.
+    """
+
+    result = ScanResult()
+    records, result.errors = enumerate_apps(config)
+    now = time.time()
+    for app in records:
+        if app.last_used is None:
+            continue  # unknown usage -> don't guess it's unused
+        idle = now - app.last_used
+        if idle < config.app_unused_after_seconds:
+            continue
+        days = int(idle // 86400)
+        result.add(
+            Candidate(
+                path=app.name,
+                size=app.size,
+                category=Category.UNUSED_APP,
+                risk=RiskLevel.HIGH,
+                reason=f"約 {days} 日間使用されていないアプリ",
+                action=Action.UNINSTALL,
+                last_access=app.last_used,
+                is_dir=True,
+                uninstall_hint=app.uninstall_hint,
+            )
+        )
+    return result
+
+
+# -- per-OS enumeration --------------------------------------------------
 def _dir_size(path: Path) -> int:
     total = 0
     try:
@@ -39,17 +87,17 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def _scan_macos(config: Config) -> ScanResult:
-    result = ScanResult()
-    now = time.time()
+def _enumerate_macos() -> tuple[list[AppRecord], list[str]]:
+    records: list[AppRecord] = []
+    errors: list[str] = []
     apps_dir = Path("/Applications")
     if not apps_dir.exists():
-        return result
+        return records, errors
     try:
         entries = list(apps_dir.iterdir())
     except OSError as exc:
-        result.errors.append(f"list /Applications: {exc}")
-        return result
+        errors.append(f"list /Applications: {exc}")
+        return records, errors
     for app in entries:
         if app.suffix != ".app":
             continue
@@ -57,32 +105,24 @@ def _scan_macos(config: Config) -> ScanResult:
             stat = app.stat()
         except OSError:
             continue
-        last_used = max(stat.st_atime, stat.st_mtime)
-        if now - last_used < config.app_unused_after_seconds:
-            continue
-        days = int((now - last_used) // 86400)
-        result.add(
-            Candidate(
-                path=str(app),
+        records.append(
+            AppRecord(
+                name=str(app),
                 size=_dir_size(app),
-                category=Category.UNUSED_APP,
-                risk=RiskLevel.HIGH,
-                reason=f"約 {days} 日間未使用のアプリ",
-                action=Action.UNINSTALL,
-                last_access=last_used,
-                is_dir=True,
+                last_used=max(stat.st_atime, stat.st_mtime),
                 uninstall_hint=f'アプリを終了してから "{app.name}" をゴミ箱へ移動',
             )
         )
-    return result
+    return records, errors
 
 
-def _scan_windows(config: Config) -> ScanResult:
-    result = ScanResult()
+def _enumerate_windows() -> tuple[list[AppRecord], list[str]]:
+    records: list[AppRecord] = []
+    errors: list[str] = []
     try:
         import winreg  # type: ignore
     except ImportError:  # not on Windows
-        return result
+        return records, errors
 
     keys = [
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
@@ -107,20 +147,31 @@ def _scan_windows(config: Config) -> ScanResult:
                 uninstall = info.get("UninstallString")
                 if not display or not uninstall:
                     continue
+                if int(info.get("SystemComponent", 0) or 0):
+                    continue  # hidden system components
                 size = int(info.get("EstimatedSize", 0) or 0) * 1024  # KB -> bytes
-                result.add(
-                    Candidate(
-                        path=display,
+                records.append(
+                    AppRecord(
+                        name=display,
                         size=size,
-                        category=Category.UNUSED_APP,
-                        risk=RiskLevel.HIGH,
-                        reason="インストール済みアプリ(最終使用日時は要確認)",
-                        action=Action.UNINSTALL,
-                        is_dir=True,
+                        last_used=_windows_last_used(info),
                         uninstall_hint=uninstall,
                     )
                 )
-    return result
+    return records, errors
+
+
+def _windows_last_used(info: dict) -> float | None:
+    """Best-effort last-used estimate from the install folder's timestamps."""
+
+    location = info.get("InstallLocation")
+    if not location:
+        return None
+    try:
+        stat = Path(location).stat()
+    except OSError:
+        return None
+    return max(stat.st_atime, stat.st_mtime)
 
 
 def _read_reg_values(winreg, key) -> dict:
@@ -134,44 +185,50 @@ def _read_reg_values(winreg, key) -> dict:
     return out
 
 
-def _scan_linux(config: Config) -> ScanResult:
-    """Linux: list user-level flatpak apps as an advisory example.
-
-    Distro package managers vary too much to reliably infer "unused", so we
-    surface installed flatpaks (which track last-used) and leave system
-    packages to the native tools.
-    """
-
-    result = ScanResult()
+def _enumerate_linux() -> tuple[list[AppRecord], list[str]]:
+    records: list[AppRecord] = []
+    errors: list[str] = []
     import shutil
     import subprocess
 
     flatpak = shutil.which("flatpak")
     if not flatpak:
-        return result
+        return records, errors
     try:
         proc = subprocess.run(
             [flatpak, "list", "--app", "--columns=application,size"],
             capture_output=True, text=True, timeout=15, check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        result.errors.append(f"flatpak list: {exc}")
-        return result
+        errors.append(f"flatpak list: {exc}")
+        return records, errors
     for line in proc.stdout.splitlines():
         parts = line.split("\t")
         if not parts or not parts[0].strip():
             continue
         app_id = parts[0].strip()
-        result.add(
-            Candidate(
-                path=app_id,
-                size=0,
-                category=Category.UNUSED_APP,
-                risk=RiskLevel.HIGH,
-                reason="インストール済み flatpak アプリ(使用状況は要確認)",
-                action=Action.UNINSTALL,
-                is_dir=True,
+        size = _parse_size(parts[1]) if len(parts) > 1 else 0
+        records.append(
+            AppRecord(
+                name=app_id,
+                size=size,
+                last_used=None,  # flatpak does not expose last-used here
                 uninstall_hint=f"flatpak uninstall {app_id}",
             )
         )
-    return result
+    return records, errors
+
+
+def _parse_size(text: str) -> int:
+    """Parse a human size like '1.2 GB' / '512 MB' into bytes (best effort)."""
+
+    text = text.strip()
+    units = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+    for unit in ("TB", "GB", "MB", "KB", "B"):
+        if text.upper().endswith(unit):
+            num = text[: -len(unit)].strip().replace(",", "")
+            try:
+                return int(float(num) * units[unit])
+            except ValueError:
+                return 0
+    return 0

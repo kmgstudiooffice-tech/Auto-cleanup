@@ -29,6 +29,8 @@ class Config:
     stale_after_seconds: int = 180 * DAY
     # An app is "unused" if not launched for this many seconds.
     app_unused_after_seconds: int = 180 * DAY
+    # An installed app is "large" at or above this many bytes.
+    large_app_min_bytes: int = 500 * MB
     # Minimum size for a duplicate group to be worth reporting.
     duplicate_min_bytes: int = 1 * MB
     # Follow symlinks while walking (kept off for safety).

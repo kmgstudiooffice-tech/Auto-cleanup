@@ -18,7 +18,9 @@ class Category(str, enum.Enum):
     DUPLICATE = "duplicate"
     STALE_FILE = "stale_file"
     UNUSED_APP = "unused_app"
+    LARGE_APP = "large_app"
     SYSTEM_JUNK = "system_junk"
+    WINDOWS_JUNK = "windows_junk"
 
     @property
     def label(self) -> str:
@@ -27,7 +29,9 @@ class Category(str, enum.Enum):
             Category.DUPLICATE: "重複ファイル",
             Category.STALE_FILE: "長期間未使用ファイル",
             Category.UNUSED_APP: "未使用アプリ",
+            Category.LARGE_APP: "大容量アプリ",
             Category.SYSTEM_JUNK: "システムのゴミ(キャッシュ/一時)",
+            Category.WINDOWS_JUNK: "Windows定番の不要ファイル",
         }[self]
 
 

@@ -66,6 +66,33 @@ def junk_roots() -> list[Path]:
     return _existing(candidates)
 
 
+def windows_junk_roots() -> list[Path]:
+    """Well-known, user-writable Windows junk locations (SAFE to clear).
+
+    These are all under the user profile (``%LOCALAPPDATA%``) so clearing
+    them needs no admin rights and never touches ``C:\\Windows``. Everything
+    here is regenerable: temp files, thumbnail/shader caches, crash dumps
+    and error reports.
+    """
+
+    if current_os() != "windows":
+        return []
+    localapp = Path(os.environ.get("LOCALAPPDATA", _home() / "AppData" / "Local"))
+    candidates = [
+        localapp / "Temp",
+        localapp / "CrashDumps",
+        localapp / "D3DSCache",                                   # shader cache
+        localapp / "Microsoft" / "Windows" / "Explorer",          # thumbnail cache
+        localapp / "Microsoft" / "Windows" / "INetCache",         # IE/Edge cache
+        localapp / "Microsoft" / "Windows" / "WER",               # error reports
+        localapp / "Microsoft" / "Windows" / "WebCache",
+        localapp / "Microsoft" / "Terminal Server Client" / "Cache",
+        localapp / "NVIDIA" / "DXCache",
+        localapp / "NVIDIA" / "GLCache",
+    ]
+    return _existing(candidates)
+
+
 def scan_roots() -> list[Path]:
     """User directories worth scanning for large / stale / duplicate files."""
 

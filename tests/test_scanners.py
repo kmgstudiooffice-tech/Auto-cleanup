@@ -69,6 +69,42 @@ def test_duplicates_ignores_same_size_different_content(tmp_path):
     assert result.candidates == []
 
 
+def test_windows_junk_is_safe(tmp_path):
+    from cleanup.core.models import Category, RiskLevel
+    from cleanup.core.scanners import windows_junk
+
+    _write(tmp_path / "a.tmp", size=100)
+    _write(tmp_path / "sub" / "b.dat", size=50)
+
+    result = windows_junk.scan(Config(), roots=[tmp_path])
+    assert len(result.candidates) == 2
+    assert all(c.category == Category.WINDOWS_JUNK and c.risk == RiskLevel.SAFE for c in result.candidates)
+
+
+def test_unused_and_large_apps_classification(monkeypatch):
+    import time
+
+    from cleanup.core.models import Action, Category, RiskLevel
+    from cleanup.core.scanners import large_apps, unused_apps
+
+    records = [
+        unused_apps.AppRecord("OldApp", 50 * 1024 * 1024, time.time() - 400 * 86400, "x"),
+        unused_apps.AppRecord("FreshApp", 50 * 1024 * 1024, time.time() - 86400, "x"),
+        unused_apps.AppRecord("HugeApp", 800 * 1024 * 1024, None, "x"),
+    ]
+    monkeypatch.setattr(unused_apps, "enumerate_apps", lambda cfg: (records, []))
+    monkeypatch.setattr(large_apps, "enumerate_apps", lambda cfg: (records, []))
+
+    unused = unused_apps.scan(Config())
+    assert [c.path for c in unused.candidates] == ["OldApp"]
+    assert all(c.risk == RiskLevel.HIGH and c.action == Action.UNINSTALL for c in unused.candidates)
+    assert all(c.category == Category.UNUSED_APP for c in unused.candidates)
+
+    large = large_apps.scan(Config(large_app_min_bytes=500 * 1024 * 1024))
+    assert [c.path for c in large.candidates] == ["HugeApp"]
+    assert all(c.category == Category.LARGE_APP for c in large.candidates)
+
+
 def test_stale_files(tmp_path):
     config = Config(stale_after_seconds=100 * 86400)
     old = _write(tmp_path / "old.txt", size=10)

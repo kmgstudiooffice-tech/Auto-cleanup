@@ -15,7 +15,7 @@
   button.secondary { background:transparent; color:inherit; }
   button.danger { background:transparent; color:var(--high); border-color:var(--high); }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:.8rem; margin-bottom:1rem; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:.8rem; margin-bottom:1rem; }
   .card { border:1px solid #8884; border-radius:12px; padding:.9rem; display:flex; flex-direction:column; gap:.4rem; }
   .card .top { display:flex; align-items:center; gap:.5rem; }
   .card .emoji { font-size:1.4rem; }
@@ -115,9 +115,11 @@ async function scan() {
 
 const CAT_EMOJI = {
   "システムのゴミ(キャッシュ/一時)": "🧽",
+  "Windows定番の不要ファイル": "🪟",
   "大容量ファイル": "📦",
   "重複ファイル": "👯",
   "長期間未使用ファイル": "🕸",
+  "大容量アプリ": "💽",
   "未使用アプリ": "📱",
 };
 const DETAIL_LIMIT = 20;  // show at most this many files per category

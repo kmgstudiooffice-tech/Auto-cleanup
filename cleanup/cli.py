@@ -43,11 +43,13 @@ def _strip_markup(msg: str) -> str:
 
 _CATEGORY_ALIASES = {
     "junk": Category.SYSTEM_JUNK,
+    "winjunk": Category.WINDOWS_JUNK,
     "large": Category.LARGE_FILE,
     "duplicates": Category.DUPLICATE,
     "dupes": Category.DUPLICATE,
     "stale": Category.STALE_FILE,
     "apps": Category.UNUSED_APP,
+    "largeapps": Category.LARGE_APP,
 }
 
 
