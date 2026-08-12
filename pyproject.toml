@@ -15,10 +15,16 @@ dependencies = [
 
 [project.optional-dependencies]
 web = ["fastapi>=0.110", "uvicorn>=0.27", "pydantic>=2.0"]
+# Native desktop window for the packaged GUI app (the .exe).
+desktop = ["fastapi>=0.110", "uvicorn>=0.27", "pydantic>=2.0", "pywebview>=5.0"]
 dev = ["pytest>=8.0", "ruff>=0.4", "fastapi>=0.110", "uvicorn>=0.27", "pydantic>=2.0", "httpx>=0.27"]
 
 [project.scripts]
 cleanup = "cleanup.cli:main"
+
+[project.gui-scripts]
+# GUI entry point: no console window when launched (used for the desktop app).
+cleanup-gui = "cleanup.desktop:main"
 
 [tool.setuptools.packages.find]
 include = ["cleanup*"]

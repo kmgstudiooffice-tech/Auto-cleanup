@@ -72,6 +72,37 @@ cleanup web            # http://127.0.0.1:8765 を開く
 高リスク項目を含む場合は実行前に確認ダイアログが表示されます。
 「実際に隔離する」をオフにすればドライランです（安全のため既定はオフ）。
 
+## デスクトップGUIアプリ（Windows .exe など）
+
+ブラウザのタブではなく、**独立したデスクトップウィンドウ**でアプリを起動できます。
+
+```bash
+pip install -e ".[desktop]"
+cleanup-gui            # ネイティブウィンドウで起動（pywebview）
+```
+
+`pywebview` が無い環境では自動的に既定のブラウザで開きます。
+
+### 単体実行ファイル（.exe）を作る
+
+同梱の PyInstaller 設定で、依存関係ごと**1ファイルの実行ファイル**に固められます。
+`.exe` は Windows 上でのみ生成できます（`.app`/ELF も同様に各OS上でビルド）。
+
+**Windows で手動ビルド:**
+
+```powershell
+pip install -e ".[web,desktop]" pyinstaller
+pyinstaller packaging/Auto-Cleanup.spec
+# dist/Auto-Cleanup.exe が生成される（ダブルクリックで起動、コンソール無し）
+```
+
+**GitHub Actions で自動ビルド（推奨）:**
+
+`.github/workflows/build-windows.yml` により、対象ブランチへの push、または手動実行
+（Actions タブ → *Build Windows EXE* → *Run workflow*）で Windows ランナーが
+`Auto-Cleanup.exe` をビルドし、**Artifacts** としてダウンロードできます。
+`vX.Y.Z` タグを push すると Release にも自動添付されます。
+
 ## 設定
 
 `~/.config/auto-cleanup/config.json` で閾値などを調整できます（無い場合は既定値）。
