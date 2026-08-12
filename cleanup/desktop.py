@@ -31,6 +31,22 @@ APP_TITLE = "Auto-Cleanup"
 logger = logging.getLogger("auto-cleanup.desktop")
 
 
+def _ensure_std_streams() -> None:
+    """Guarantee sys.stdout/stderr are writable streams, not None.
+
+    A console-less packaged exe (``console=False``) has ``sys.stdout`` and
+    ``sys.stderr`` set to ``None``. Any library that touches them — uvicorn
+    calls ``sys.stdout.isatty()`` at startup, and ``print`` writes to
+    stdout — would then crash. Redirect the missing ones to os.devnull so
+    the whole app stays alive.
+    """
+
+    devnull = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - lives for process lifetime
+    for name in ("stdout", "stderr", "__stdout__", "__stderr__"):
+        if getattr(sys, name, None) is None:
+            setattr(sys, name, devnull)
+
+
 def _log_path() -> Path:
     """A writable path for the startup log (next to the exe, else temp)."""
 
@@ -80,7 +96,10 @@ def _serve(host: str, port: int) -> None:
         # a relative import would have no parent package.
         from cleanup.web.server import _build_app
 
-        uvicorn.run(_build_app(), host=host, port=port, log_level="warning")
+        # log_config=None disables uvicorn's own logging setup, which builds
+        # a colour formatter that calls sys.stdout.isatty() and would crash
+        # in a console-less exe.
+        uvicorn.run(_build_app(), host=host, port=port, log_level="warning", log_config=None)
     except Exception:  # noqa: BLE001 - logged; console-less app must not die silently
         # The server runs in a background thread; log so a crash here is not
         # invisible (it would otherwise look like the app "did nothing").
@@ -138,6 +157,7 @@ def _run_native_window(url: str) -> bool:
 
 
 def main() -> int:
+    _ensure_std_streams()
     log_path = _setup_logging()
     logger.info("=== %s starting (frozen=%s, pid=%s) ===", APP_TITLE, getattr(sys, "frozen", False), os.getpid())
 
