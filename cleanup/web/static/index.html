@@ -5,36 +5,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Auto-Cleanup</title>
 <style>
-  :root { color-scheme: light dark; --safe:#2e7d32; --low:#b8860b; --high:#c62828; }
+  :root { color-scheme: light dark; --safe:#2e7d32; --low:#b8860b; --high:#c62828; --accent:#0a84ff; }
   * { box-sizing: border-box; }
   body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 1100px; margin-inline: auto; }
   h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.05rem; }
   .toolbar { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem; }
-  button { padding:.5rem .9rem; border-radius:8px; border:1px solid #8888; background:#0a84ff; color:#fff; cursor:pointer; }
+  button { padding:.5rem .9rem; border-radius:8px; border:1px solid #8888; background:var(--accent); color:#fff; cursor:pointer; font-size:.9rem; }
   button.secondary { background:transparent; color:inherit; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .cat { border:1px solid #8884; border-radius:12px; margin-bottom:1rem; overflow:hidden; }
-  .cat h2 { font-size:1rem; margin:0; padding:.6rem .9rem; background:#8881; display:flex; justify-content:space-between; }
+  .cat h2 { margin:0; padding:.6rem .9rem; background:#8881; display:flex; justify-content:space-between; }
   table { width:100%; border-collapse:collapse; font-size:.9rem; }
   td, th { padding:.4rem .6rem; border-top:1px solid #8883; text-align:left; }
   td.size { text-align:right; white-space:nowrap; }
   td.path { word-break:break-all; }
-  .risk { font-weight:600; }
-  .risk.safe { color:var(--safe); } .risk.low { color:var(--low); } .risk.high { color:var(--high); }
+  .risk { font-weight:600; } .risk.safe { color:var(--safe); } .risk.low { color:var(--low); } .risk.high { color:var(--high); }
   .summary { font-weight:600; margin:1rem 0; }
-  .hint { opacity:.7; font-size:.85rem; }
-  #result { margin-top:1rem; padding:1rem; border-radius:12px; background:#8881; white-space:pre-wrap; }
+  .hint { opacity:.75; font-size:.85rem; }
+  .steps { display:flex; gap:.4rem; flex-wrap:wrap; margin:.2rem 0 1rem; }
+  .step { font-size:.8rem; padding:.15rem .5rem; border-radius:999px; background:#8882; }
+  #result { margin-top:1rem; padding:1rem 1.2rem; border-radius:12px; border:1px solid #8884; }
+  #result.ok { border-color:var(--safe); background:color-mix(in srgb, var(--safe) 12%, transparent); }
+  #result.dry { border-color:var(--low); background:color-mix(in srgb, var(--low) 12%, transparent); }
+  #result h2 { margin:0 0 .4rem; }
+  #result ul { margin:.4rem 0; padding-left:1.1rem; }
+  code { background:#8882; padding:.1rem .35rem; border-radius:5px; word-break:break-all; }
+  .sessions { margin-top:2rem; border-top:1px solid #8884; padding-top:1rem; }
+  .session { display:flex; align-items:center; gap:.8rem; justify-content:space-between; border:1px solid #8884; border-radius:10px; padding:.5rem .8rem; margin-bottom:.5rem; }
   dialog { border:none; border-radius:12px; padding:1.5rem; max-width:480px; }
 </style>
 </head>
 <body>
   <h1>🧹 Auto-Cleanup</h1>
-  <p class="hint">スキャンしても何も削除されません。削除は「隔離」（復元可能）で行い、実行前に必ず確認します。</p>
+  <div class="steps">
+    <span class="step">① スキャン（削除しない）</span>
+    <span class="step">② 対象を選ぶ</span>
+    <span class="step">③ 処理（隔離＝ゴミ箱へ移動）</span>
+    <span class="step">④ 必要なら復元</span>
+  </div>
+  <p class="hint">「処理」は削除ではなく<strong>隔離フォルダへの移動</strong>です。下の「隔離履歴」からいつでも元に戻せます。「実際に隔離する」がオフの間は<strong>ドライラン（練習）</strong>で、ファイルは動きません。</p>
 
   <div class="toolbar">
-    <button id="scanBtn">スキャン</button>
+    <button id="scanBtn">① スキャン</button>
     <label><input type="checkbox" id="applyChk" /> 実際に隔離する（オフ=ドライラン）</label>
-    <button id="cleanBtn" class="secondary" disabled>選択した項目を処理</button>
+    <button id="cleanBtn" class="secondary" disabled>③ 選択した項目を処理</button>
     <span id="status" class="hint"></span>
   </div>
 
@@ -42,8 +57,14 @@
   <div id="categories"></div>
   <div id="result" hidden></div>
 
+  <div class="sessions">
+    <h2>🗄 隔離履歴（復元できます）</h2>
+    <p class="hint" id="sessionsHint">まだ隔離したものはありません。</p>
+    <div id="sessionsList"></div>
+  </div>
+
   <dialog id="confirmDlg">
-    <h3>高リスク項目の確認</h3>
+    <h3>実行の確認</h3>
     <p id="confirmText"></p>
     <div style="text-align:right; display:flex; gap:.5rem; justify-content:flex-end;">
       <button class="secondary" id="confirmCancel">キャンセル</button>
@@ -66,12 +87,17 @@ const riskLabel = (r) => ["安全","低","高"][r] || "低";
 async function scan() {
   $("#status").textContent = "スキャン中…";
   $("#cleanBtn").disabled = true;
-  const res = await fetch("/api/scan", {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
-  const data = await res.json();
-  candidates = data.candidates;
-  render(data);
-  $("#status").textContent = `${data.count} 件 / 合計 ${human(data.total_size)}`;
-  $("#cleanBtn").disabled = data.count === 0;
+  $("#result").hidden = true;
+  try {
+    const res = await fetch("/api/scan", {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"});
+    const data = await res.json();
+    candidates = data.candidates;
+    render(data);
+    $("#status").textContent = `${data.count} 件 / 合計 ${human(data.total_size)}`;
+    $("#cleanBtn").disabled = data.count === 0;
+  } catch (e) {
+    $("#status").textContent = "スキャンに失敗しました: " + e;
+  }
 }
 
 function render(data) {
@@ -113,34 +139,96 @@ function selectedHighCount() {
 async function clean() {
   const ids = selectedIds();
   if (!ids.length) { alert("項目が選択されていません。"); return; }
+  const apply = $("#applyChk").checked;
   const high = selectedHighCount();
-  if (high > 0) {
-    $("#confirmText").textContent = `高リスク（影響の可能性あり）を ${high} 件含みます。合計 ${ids.length} 件を処理してよろしいですか？`;
-    $("#confirmDlg").showModal();
-    return;
-  }
-  await doClean(ids);
+  const mode = apply ? "実際に隔離します" : "ドライラン（練習・ファイルは動きません）";
+  let msg = `${ids.length} 件を処理します。\nモード: ${mode}`;
+  if (apply && high > 0) msg += `\n※ 高リスク（影響の可能性あり）を ${high} 件含みます。`;
+  $("#confirmText").textContent = msg;
+  $("#confirmDlg").showModal();
 }
 
 async function doClean(ids) {
   const apply = $("#applyChk").checked;
-  const res = await fetch("/api/clean", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ids, apply})});
-  const r = await res.json();
   const box = $("#result");
   box.hidden = false;
-  let msg = r.dry_run
-    ? `【ドライラン】${r.quarantined} 件 / ${human(r.freed_bytes)} を隔離予定。「実際に隔離する」をオンにして再実行してください。`
-    : `✅ ${r.quarantined} 件 / ${human(r.freed_bytes)} を隔離しました。` + (r.session_id?`\n復元: cleanup restore --session ${r.session_id}`:"");
-  if (r.skipped && r.skipped.length) msg += `\n${r.skipped.length} 件はスキップされました。`;
-  box.textContent = msg;
-  if (apply && !r.dry_run) scan();
+  box.className = "";
+  box.innerHTML = "処理中…";
+  try {
+    const res = await fetch("/api/clean", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ids, apply})});
+    const r = await res.json();
+    renderResult(r);
+    if (apply && !r.dry_run) { await scan(); await loadSessions(); }
+  } catch (e) {
+    box.className = "";
+    box.innerHTML = "処理に失敗しました: " + e;
+  }
+}
+
+function renderResult(r) {
+  const box = $("#result");
+  if (r.dry_run) {
+    box.className = "dry";
+    box.innerHTML = `<h2>🔍 ドライラン結果（まだ何も動かしていません）</h2>
+      <p><strong>${r.quarantined} 件 / ${human(r.freed_bytes)}</strong> を隔離予定です。</p>
+      <p class="hint">実際に隔離するには、上の「実際に隔離する」にチェックを入れてもう一度「処理」を押してください。</p>`;
+  } else {
+    box.className = "ok";
+    let html = `<h2>✅ 隔離しました</h2>
+      <p><strong>${r.quarantined} 件 / ${human(r.freed_bytes)}</strong> を隔離フォルダへ移動しました（削除ではありません）。</p>`;
+    if (r.quarantine_dir) html += `<p class="hint">保存先: <code>${r.quarantine_dir}</code></p>`;
+    if (r.session_id) html += `<p><button onclick="restore('${r.session_id}')">↩ この操作を元に戻す</button>
+      <span class="hint">（下の「隔離履歴」からも復元できます）</span></p>`;
+    if (r.skipped && r.skipped.length) html += `<p class="hint">${r.skipped.length} 件はスキップされました。</p>`;
+    box.innerHTML = html;
+  }
+  box.scrollIntoView({behavior:"smooth", block:"nearest"});
+}
+
+async function loadSessions() {
+  try {
+    const res = await fetch("/api/sessions");
+    const data = await res.json();
+    const list = $("#sessionsList");
+    list.innerHTML = "";
+    if (!data.sessions.length) {
+      $("#sessionsHint").textContent = "まだ隔離したものはありません。";
+      return;
+    }
+    $("#sessionsHint").textContent = "各操作を丸ごと元の場所へ戻せます。";
+    for (const s of data.sessions) {
+      const div = document.createElement("div");
+      div.className = "session";
+      div.innerHTML = `<span><strong>${s.id}</strong> — ${s.count} 件 / ${human(s.total_size)}</span>
+        <button class="secondary" onclick="restore('${s.id}')">↩ 復元</button>`;
+      list.appendChild(div);
+    }
+  } catch (e) { /* sessions are best-effort */ }
+}
+
+async function restore(sessionId) {
+  if (!confirm(`セッション ${sessionId} のファイルを元の場所へ戻します。よろしいですか？`)) return;
+  try {
+    const res = await fetch("/api/restore", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({session_id: sessionId})});
+    const r = await res.json();
+    const box = $("#result");
+    box.hidden = false; box.className = "ok";
+    box.innerHTML = `<h2>↩ 復元しました</h2><p><strong>${r.restored.length} 件</strong>を元の場所へ戻しました。`
+      + (r.failed && r.failed.length ? ` （${r.failed.length} 件は失敗）` : "") + `</p>`;
+    await loadSessions();
+    box.scrollIntoView({behavior:"smooth", block:"nearest"});
+  } catch (e) {
+    alert("復元に失敗しました: " + e);
+  }
 }
 
 $("#scanBtn").addEventListener("click", scan);
 $("#cleanBtn").addEventListener("click", clean);
 $("#confirmOk").addEventListener("click", ()=>{ $("#confirmDlg").close(); doClean(selectedIds()); });
 $("#confirmCancel").addEventListener("click", ()=> $("#confirmDlg").close());
+loadSessions();
 </script>
 </body>
 </html>

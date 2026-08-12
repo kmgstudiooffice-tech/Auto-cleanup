@@ -31,3 +31,36 @@ def test_index_served():
     r = client.get("/")
     assert r.status_code == 200
     assert "Auto-Cleanup" in r.text
+
+
+def test_clean_sessions_restore_flow(sandbox, monkeypatch):
+    """Apply a cleanup via the API, see it in sessions, then restore it."""
+
+    # Lower the large-file threshold so a small temp file qualifies by
+    # making Config.load() return a tuned config.
+    from cleanup.core.config import Config
+
+    monkeypatch.setattr(Config, "load", classmethod(lambda cls: Config(large_file_min_bytes=1000)))
+
+    demo = sandbox / "demo"
+    demo.mkdir()
+    f = demo / "big.bin"
+    f.write_bytes(b"\0" * 5000)
+
+    client = TestClient(_build_app())
+    scan = client.post("/api/scan", json={"paths": [str(demo)], "categories": ["large_file"]}).json()
+    ids = [c["id"] for c in scan["candidates"]]
+    assert ids, "expected the large file to be found"
+
+    clean = client.post("/api/clean", json={"ids": ids, "apply": True}).json()
+    assert clean["quarantined"] == 1
+    assert clean["session_id"] and clean["quarantine_dir"]
+    assert not f.exists()  # moved to quarantine
+
+    sessions = client.get("/api/sessions").json()["sessions"]
+    assert any(s["id"] == clean["session_id"] and s["count"] == 1 for s in sessions)
+
+    restore = client.post("/api/restore", json={"session_id": clean["session_id"]}).json()
+    assert len(restore["restored"]) == 1
+    assert not restore["failed"]
+    assert f.exists()  # back in place

@@ -31,6 +31,10 @@ class CleanRequest(BaseModel):
     apply: bool = False
 
 
+class RestoreRequest(BaseModel):
+    session_id: str
+
+
 def _build_app():
     from fastapi import FastAPI
     from fastapi.responses import FileResponse, JSONResponse
@@ -66,12 +70,17 @@ def _build_app():
         selected = [state[i] for i in req.ids if i in state]
         executor = Executor(config, dry_run=not req.apply)
         report = executor.execute(selected)
+        from ..core.config import QUARANTINE_ROOT
+
+        quarantine_dir = str(QUARANTINE_ROOT / report.session_id) if report.session_id else None
         return JSONResponse(
             {
                 "quarantined": len(report.quarantined),
+                "quarantined_paths": report.quarantined,
                 "freed_bytes": report.freed_bytes,
                 "skipped": report.skipped,
                 "session_id": report.session_id,
+                "quarantine_dir": quarantine_dir,
                 "dry_run": not req.apply,
                 "manual_uninstalls": [c.to_dict() for c in report.manual_uninstalls],
             }
@@ -79,11 +88,11 @@ def _build_app():
 
     @app.get("/api/sessions")
     def api_sessions():
-        return {"sessions": Executor.list_sessions()}
+        return {"sessions": Executor.session_details()}
 
     @app.post("/api/restore")
-    def api_restore(session_id: str):
-        restored, failed = Executor.restore(session_id)
+    def api_restore(req: RestoreRequest):
+        restored, failed = Executor.restore(req.session_id)
         return {"restored": restored, "failed": failed}
 
     return app

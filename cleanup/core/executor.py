@@ -103,6 +103,32 @@ class Executor:
         return sorted(p.name for p in QUARANTINE_ROOT.iterdir() if (p / "manifest.json").exists())
 
     @staticmethod
+    def session_details() -> list[dict]:
+        """List quarantine sessions with item count and reclaimed size.
+
+        Used by the UI so the user can see exactly what each cleanup moved
+        and restore it if needed.
+        """
+
+        out: list[dict] = []
+        for name in Executor.list_sessions():
+            manifest_path = QUARANTINE_ROOT / name / "manifest.json"
+            try:
+                items = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                items = []
+            out.append(
+                {
+                    "id": name,
+                    "count": len(items),
+                    "total_size": sum(int(i.get("size", 0)) for i in items),
+                    "dir": str(QUARANTINE_ROOT / name),
+                    "originals": [i.get("original") for i in items],
+                }
+            )
+        return sorted(out, key=lambda s: s["id"], reverse=True)
+
+    @staticmethod
     def restore(session_id: str) -> tuple[list[str], list[tuple[str, str]]]:
         """Move a quarantined session's files back to their origins."""
 
