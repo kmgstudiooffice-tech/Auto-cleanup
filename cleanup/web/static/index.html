@@ -14,10 +14,22 @@
   button { padding:.5rem .9rem; border-radius:8px; border:1px solid #8888; background:var(--accent); color:#fff; cursor:pointer; font-size:.9rem; }
   button.secondary { background:transparent; color:inherit; }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  .cat { border:1px solid #8884; border-radius:12px; margin-bottom:1rem; overflow:hidden; }
-  .cat h2 { margin:0; padding:.6rem .9rem; background:#8881; display:flex; justify-content:space-between; }
-  table { width:100%; border-collapse:collapse; font-size:.9rem; }
-  td, th { padding:.4rem .6rem; border-top:1px solid #8883; text-align:left; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:.8rem; margin-bottom:1rem; }
+  .card { border:1px solid #8884; border-radius:12px; padding:.9rem; display:flex; flex-direction:column; gap:.4rem; }
+  .card .top { display:flex; align-items:center; gap:.5rem; }
+  .card .emoji { font-size:1.4rem; }
+  .card .name { font-weight:600; }
+  .card .big { font-size:1.5rem; font-weight:700; }
+  .card .meta { font-size:.85rem; opacity:.8; }
+  .badge { font-size:.72rem; padding:.05rem .4rem; border-radius:999px; margin-right:.25rem; }
+  .badge.safe { background:color-mix(in srgb, var(--safe) 25%, transparent); }
+  .badge.low { background:color-mix(in srgb, var(--low) 30%, transparent); }
+  .badge.high { background:color-mix(in srgb, var(--high) 25%, transparent); }
+  .card .toggle { align-self:flex-start; background:none; border:none; color:var(--accent); padding:0; font-size:.82rem; cursor:pointer; }
+  .details { display:none; margin-top:.3rem; }
+  .details.open { display:block; }
+  table { width:100%; border-collapse:collapse; font-size:.82rem; }
+  td, th { padding:.3rem .4rem; border-top:1px solid #8883; text-align:left; }
   td.size { text-align:right; white-space:nowrap; }
   td.path { word-break:break-all; }
   .risk { font-weight:600; } .risk.safe { color:var(--safe); } .risk.low { color:var(--low); } .risk.high { color:var(--high); }
@@ -54,7 +66,7 @@
   </div>
 
   <div id="summary" class="summary"></div>
-  <div id="categories"></div>
+  <div id="categories" class="cards"></div>
   <div id="result" hidden></div>
 
   <div class="sessions">
@@ -100,33 +112,84 @@ async function scan() {
   }
 }
 
+const CAT_EMOJI = {
+  "システムのゴミ(キャッシュ/一時)": "🧽",
+  "大容量ファイル": "📦",
+  "重複ファイル": "👯",
+  "長期間未使用ファイル": "🕸",
+  "未使用アプリ": "📱",
+};
+const DETAIL_LIMIT = 20;  // show at most this many files per category
+
+function riskCounts(items) {
+  const c = [0, 0, 0];
+  for (const it of items) c[it.risk]++;
+  return c;
+}
+
 function render(data) {
   const groups = {};
   for (const c of data.candidates) (groups[c.category_label] ||= []).push(c);
   const container = $("#categories");
   container.innerHTML = "";
+
   for (const [label, items] of Object.entries(groups)) {
     items.sort((a,b)=>b.size-a.size);
     const subtotal = items.reduce((s,c)=>s+c.size,0);
-    const div = document.createElement("div");
-    div.className = "cat";
-    div.innerHTML = `<h2><span><label><input type="checkbox" class="catAll" /> ${label}</label></span>
-      <span>${items.length} 件 / ${human(subtotal)}</span></h2>`;
-    const table = document.createElement("table");
-    table.innerHTML = `<tr><th></th><th>リスク</th><th>サイズ</th><th>パス</th><th>理由</th></tr>` +
-      items.map(c => `<tr>
+    const [nSafe, nLow, nHigh] = riskCounts(items);
+
+    const card = document.createElement("div");
+    card.className = "card";
+    const badges = [
+      nSafe ? `<span class="badge safe">安全 ${nSafe}</span>` : "",
+      nLow ? `<span class="badge low">低 ${nLow}</span>` : "",
+      nHigh ? `<span class="badge high">高 ${nHigh}</span>` : "",
+    ].join("");
+
+    // Summary-first: emoji, name, big size, count, risk badges, one checkbox.
+    card.innerHTML = `
+      <div class="top">
+        <span class="emoji">${CAT_EMOJI[label] || "🗂"}</span>
+        <label class="name"><input type="checkbox" class="catAll" checked> ${label}</label>
+      </div>
+      <div class="big">${human(subtotal)}</div>
+      <div class="meta">${items.length} 件　${badges}</div>
+      <button class="toggle" type="button">詳細を表示 ▾</button>
+      <div class="details"></div>`;
+
+    // Detail table lives hidden; capped so long lists don't overwhelm.
+    const shown = items.slice(0, DETAIL_LIMIT);
+    const rows = shown.map(c => `<tr>
         <td><input type="checkbox" class="pick" data-id="${c.id}" data-risk="${c.risk}" ${c.risk<2?"checked":""} ${c.action==="uninstall"?"disabled":""}></td>
         <td class="risk ${riskClass(c.risk)}">${riskLabel(c.risk)}</td>
         <td class="size">${human(c.size)}</td>
         <td class="path">${c.path}${c.uninstall_hint?`<br><span class="hint">削除方法: ${c.uninstall_hint}</span>`:""}</td>
-        <td>${c.reason}</td></tr>`).join("");
-    div.appendChild(table);
-    div.querySelector(".catAll").addEventListener("change", (e)=>{
-      div.querySelectorAll(".pick:not([disabled])").forEach(cb=>cb.checked=e.target.checked);
+      </tr>`).join("");
+    // Any items beyond the cap still get a hidden checkbox so "select all"
+    // and processing still cover them, without cluttering the table.
+    const extra = items.slice(DETAIL_LIMIT).map(c =>
+      `<input type="checkbox" class="pick" data-id="${c.id}" data-risk="${c.risk}" ${c.risk<2?"checked":""} ${c.action==="uninstall"?"disabled":""} hidden>`
+    ).join("");
+    const moreNote = items.length > DETAIL_LIMIT
+      ? `<p class="hint">上位 ${DETAIL_LIMIT} 件のみ表示（残り ${items.length - DETAIL_LIMIT} 件も選択対象です）</p>` : "";
+    card.querySelector(".details").innerHTML =
+      `<table><tr><th></th><th>リスク</th><th>サイズ</th><th>ファイル</th></tr>${rows}</table>${moreNote}${extra}`;
+
+    const toggle = card.querySelector(".toggle");
+    const details = card.querySelector(".details");
+    toggle.addEventListener("click", () => {
+      const open = details.classList.toggle("open");
+      toggle.textContent = open ? "詳細を隠す ▴" : "詳細を表示 ▾";
     });
-    container.appendChild(div);
+    card.querySelector(".catAll").addEventListener("change", (e)=>{
+      card.querySelectorAll(".pick:not([disabled])").forEach(cb=>cb.checked=e.target.checked);
+    });
+    container.appendChild(card);
   }
-  $("#summary").textContent = data.count ? `合計回収可能サイズ: ${human(data.total_size)}` : "候補は見つかりませんでした。";
+
+  $("#summary").textContent = data.count
+    ? `合計 ${data.count} 件・回収可能 ${human(data.total_size)}（カテゴリを選んで「処理」）`
+    : "候補は見つかりませんでした。";
 }
 
 function selectedIds() {
